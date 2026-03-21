@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install linters
+        run: pip install ruff mypy pydantic pydantic-settings
+      - name: Ruff check
+        run: ruff check src/ tests/ infra/
+      - name: Ruff format check
+        run: ruff format --check src/ tests/ infra/
+      - name: Mypy
+        run: mypy src/ --ignore-missing-imports
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install ".[dev]"
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --cov=src --cov-report=xml
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+        continue-on-error: true
+
+  infra-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install ".[dev]"
+      - name: Lint infra code
+        run: |
+          ruff check infra/ tests/unit/test_infra_*.py
+          ruff format --check infra/ tests/unit/test_infra_*.py
+      - name: Run infra unit tests
+        run: pytest tests/unit/test_infra_*.py -v

@@ -1,0 +1,191 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 6
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      echo 'Creating Kafka topics...'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw-financial-news --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic raw-financial-news-dlq --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic processed-financial-news --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic llm-analysis-results --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic aggregation-results --partitions 3 --replication-factor 1
+      echo 'Topics created.'
+      "
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: financial_data
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: localdev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline -d financial_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      mc alias set local http://minio:9000 minioadmin minioadmin
+      mc mb --ignore-existing local/financial-data-lake
+      echo 'Bucket created.'
+      "
+
+  producer:
+    build:
+      context: .
+      dockerfile: docker/producer.Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PRODUCER_TYPE: ${PRODUCER_TYPE:-fake}
+      FAKE_PRODUCER_INTERVAL: "3"
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      ALPHA_VANTAGE_POLL_INTERVAL: "300"
+      WATCHLIST_TICKERS: ${WATCHLIST_TICKERS:-AAPL,MSFT,GOOGL,AMZN,TSLA}
+      SEC_EDGAR_POLL_INTERVAL: "600"
+      SEC_EDGAR_USER_AGENT: ${SEC_EDGAR_USER_AGENT:-FinancialDataPipeline/1.0 (contact@example.com)}
+    restart: on-failure
+
+  processor:
+    build:
+      context: .
+      dockerfile: docker/processor.Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PROCESSOR_EMIT_INTERVAL: "300"
+      PROCESSOR_WINDOW_SECONDS: "3600"
+    restart: on-failure
+
+  consumer:
+    build:
+      context: .
+      dockerfile: docker/consumer.Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CONSUMER_TYPE: db_sink
+      DATABASE_URL: postgresql://pipeline:localdev@postgres:5432/financial_data
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: financial-data-lake
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+    restart: on-failure
+
+  llm-analyzer:
+    build:
+      context: .
+      dockerfile: docker/llm-analyzer.Dockerfile
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      LLM_MODEL_ID: ${LLM_MODEL_ID:-gpt-4o-mini}
+      LLM_REQUESTS_PER_MINUTE: "50"
+      LLM_MAX_RETRIES: "3"
+      LLM_CONTENT_MAX_CHARS: "3000"
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://pipeline:localdev@postgres:5432/financial_data
+    restart: on-failure
+
+volumes:
+  pgdata:
+  miniodata:
