@@ -47,7 +47,7 @@ def create_database(
         port = db["Endpoint"]["Port"]
         logger.info("rds_instance_exists", instance_id=instance_id, endpoint=endpoint)
     except ClientError as e:
-        if e.response["Error"]["Code"] != "DBInstanceNotFoundFault":
+        if e.response["Error"]["Code"] != "DBInstanceNotFound":
             raise
         rds.create_db_instance(
             DBInstanceIdentifier=instance_id,
@@ -108,7 +108,7 @@ def destroy_database(session: boto3.Session, settings: InfraSettings) -> None:
         )
         logger.info("rds_instance_deleted", instance_id=instance_id)
     except ClientError as e:
-        if e.response["Error"]["Code"] == "DBInstanceNotFoundFault":
+        if e.response["Error"]["Code"] == "DBInstanceNotFound":
             logger.info("rds_instance_not_found", instance_id=instance_id)
         else:
             raise
