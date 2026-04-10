@@ -8,7 +8,7 @@ import structlog
 from botocore.exceptions import ClientError
 
 from infra.config import InfraSettings
-from infra.helpers import tag_list
+from infra.helpers import tag_list, tag_list_ecs
 
 logger = structlog.get_logger(__name__)
 
@@ -129,6 +129,12 @@ def create_task_role(
                     "Resource": [msk_cluster_arn, f"{msk_cluster_arn}/*"],
                 },
                 {
+                    "Sid": "BedrockAccess",
+                    "Effect": "Allow",
+                    "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                    "Resource": "*",
+                },
+                {
                     "Sid": "CloudWatchLogs",
                     "Effect": "Allow",
                     "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
@@ -174,6 +180,23 @@ def create_log_groups(session: boto3.Session, settings: InfraSettings) -> dict[s
 
 
 # ---------------------------------------------------------------------------
+# Service-Linked Role
+# ---------------------------------------------------------------------------
+
+
+def ensure_ecs_service_linked_role(session: boto3.Session) -> None:
+    iam = session.client("iam")
+    try:
+        iam.create_service_linked_role(AWSServiceName="ecs.amazonaws.com")
+        logger.info("ecs_service_linked_role_created")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "InvalidInput" and "has been taken" in str(e):
+            logger.info("ecs_service_linked_role_exists")
+        else:
+            raise
+
+
+# ---------------------------------------------------------------------------
 # ECS Cluster
 # ---------------------------------------------------------------------------
 
@@ -195,7 +218,7 @@ def create_ecs_cluster(session: boto3.Session, settings: InfraSettings) -> str:
         defaultCapacityProviderStrategy=[
             {"capacityProvider": "FARGATE_SPOT", "weight": 1},
         ],
-        tags=tag_list(settings.default_tags),
+        tags=tag_list_ecs(settings.default_tags),
         settings=[{"name": "containerInsights", "value": "enabled"}],
     )
     arn = resp["cluster"]["clusterArn"]
@@ -335,16 +358,14 @@ def register_task_definitions(
                 region,
                 environment=[
                     _env("KAFKA_BOOTSTRAP_SERVERS", bootstrap_servers),
-                    _env("LLM_PROVIDER", "openai"),
-                    _env("LLM_MODEL_ID", "gpt-4o-mini"),
+                    _env("LLM_PROVIDER", "bedrock"),
+                    _env("LLM_MODEL_ID", "us.anthropic.claude-3-5-haiku-20241022-v1:0"),
                     _env("LLM_REQUESTS_PER_MINUTE", "50"),
                     _env("LLM_MAX_RETRIES", "3"),
                     _env("LLM_CONTENT_MAX_CHARS", "3000"),
+                    _env("AWS_REGION", region),
                 ],
-                secrets=[
-                    _secret("OPENAI_API_KEY", secret_arns["openai-api-key"]),
-                    _secret("ANTHROPIC_API_KEY", secret_arns["anthropic-api-key"]),
-                ],
+                secrets=[],
             ),
         },
         "api": {
@@ -374,7 +395,7 @@ def register_task_definitions(
             executionRoleArn=execution_role_arn,
             taskRoleArn=task_role_arn,
             containerDefinitions=[definition["container"]],
-            tags=tag_list(settings.default_tags),
+            tags=tag_list_ecs(settings.default_tags),
         )
         task_arn = resp["taskDefinition"]["taskDefinitionArn"]
         logger.info("task_definition_registered", family=family, arn=task_arn)
@@ -435,7 +456,7 @@ def create_ecs_services(
                 "launchType": "FARGATE",
                 "networkConfiguration": network_config,
                 "enableExecuteCommand": True,
-                "tags": tag_list(settings.default_tags),
+                "tags": tag_list_ecs(settings.default_tags),
                 "deploymentConfiguration": {
                     "minimumHealthyPercent": 0,
                     "maximumPercent": 200,

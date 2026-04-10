@@ -22,7 +22,7 @@ def create_alb(
     elbv2 = session.client("elbv2")
     prefix = settings.resource_prefix
     alb_name = f"{prefix}-alb"
-    tg_name = f"{prefix}-api-tg"
+    tg_name = f"{prefix}-tg"
 
     # --- Load Balancer ---
     try:
@@ -99,7 +99,7 @@ def destroy_alb(session: boto3.Session, settings: InfraSettings) -> None:
     elbv2 = session.client("elbv2")
     prefix = settings.resource_prefix
     alb_name = f"{prefix}-alb"
-    tg_name = f"{prefix}-api-tg"
+    tg_name = f"{prefix}-tg"
 
     # Delete ALB (listeners are deleted automatically)
     try:

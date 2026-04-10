@@ -17,6 +17,7 @@ from infra.ecs import (
     create_execution_role,
     create_log_groups,
     create_task_role,
+    ensure_ecs_service_linked_role,
     register_task_definitions,
 )
 from infra.helpers import get_boto3_session
@@ -50,7 +51,7 @@ def deploy(settings: InfraSettings | None = None) -> dict[str, Any]:
     secret_arns = create_secrets(session, settings)
     results["secret_arns"] = secret_arns
 
-    db_password = generate_db_password()
+    db_password = generate_db_password()  # only used if RDS is newly created
 
     logger.info("phase_1_complete")
 
@@ -95,7 +96,10 @@ def deploy(settings: InfraSettings | None = None) -> dict[str, Any]:
     # ── Phase 3: Post-dependency setup ──
     logger.info("phase_3_start", description="Secrets update, topics, IAM, log groups")
 
-    update_database_secret(session, settings, db_info["endpoint"], db_password)
+    if db_info["created"]:
+        update_database_secret(session, settings, db_info["endpoint"], db_password)
+    else:
+        logger.info("rds_existing_skipping_secret_update")
 
     try:
         create_msk_topics(msk_info["bootstrap_servers"])
@@ -121,6 +125,8 @@ def deploy(settings: InfraSettings | None = None) -> dict[str, Any]:
 
     # ── Phase 4: ECS ──
     logger.info("phase_4_start", description="Task definitions, cluster, services")
+
+    ensure_ecs_service_linked_role(session)
 
     task_def_arns = register_task_definitions(
         session,

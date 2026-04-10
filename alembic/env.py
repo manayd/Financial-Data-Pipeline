@@ -16,7 +16,11 @@ target_metadata = Base.metadata
 # Override URL from Settings if available
 try:
     settings = Settings()
-    config.set_main_option("sqlalchemy.url", settings.database_url)
+    # Alembic uses psycopg2 (sync); convert asyncpg URL if needed
+    db_url = settings.database_url
+    db_url = db_url.replace("postgresql+asyncpg://", "postgresql://")
+    db_url = db_url.replace("ssl=require", "sslmode=require")
+    config.set_main_option("sqlalchemy.url", db_url)
 except Exception:
     pass  # Fall back to alembic.ini value
 

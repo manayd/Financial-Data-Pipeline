@@ -20,6 +20,11 @@ def tag_list(tags: dict[str, str]) -> list[dict[str, str]]:
     return [{"Key": k, "Value": v} for k, v in tags.items()]
 
 
+def tag_list_ecs(tags: dict[str, str]) -> list[dict[str, str]]:
+    """ECS APIs require lowercase key/value in tag objects."""
+    return [{"key": k, "value": v} for k, v in tags.items()]
+
+
 def tag_dict(tags: list[dict[str, str]]) -> dict[str, str]:
     return {t["Key"]: t["Value"] for t in tags}
 

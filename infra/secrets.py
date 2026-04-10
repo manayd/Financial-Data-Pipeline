@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import secrets as stdlib_secrets
 
 import boto3
@@ -11,7 +10,7 @@ from infra.config import InfraSettings
 
 logger = structlog.get_logger(__name__)
 
-SECRET_NAMES = ("database-url", "openai-api-key", "anthropic-api-key", "alpha-vantage-api-key")
+SECRET_NAMES = ("database-url", "alpha-vantage-api-key")
 
 
 def _secret_name(prefix: str, name: str) -> str:
@@ -36,7 +35,7 @@ def create_secrets(session: boto3.Session, settings: InfraSettings) -> dict[str,
         except ClientError as e:
             if e.response["Error"]["Code"] != "ResourceNotFoundException":
                 raise
-            initial_value = json.dumps({"value": "CHANGE_ME"})
+            initial_value = "CHANGE_ME"
             resp = sm.create_secret(
                 Name=full_name,
                 SecretString=initial_value,
@@ -63,7 +62,8 @@ def update_database_secret(
     sm = session.client("secretsmanager")
     full_name = _secret_name(settings.resource_prefix, "database-url")
     db_url = (
-        f"postgresql://{settings.db_username}:{db_password}@{db_endpoint}:5432/{settings.db_name}"
+        f"postgresql+asyncpg://{settings.db_username}:{db_password}"
+        f"@{db_endpoint}:5432/{settings.db_name}?ssl=require"
     )
     sm.put_secret_value(SecretId=full_name, SecretString=db_url)
     logger.info("database_secret_updated", name=full_name)

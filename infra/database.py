@@ -40,6 +40,7 @@ def create_database(
         logger.info("db_subnet_group_created", name=subnet_group)
 
     # --- RDS instance ---
+    created = False
     try:
         resp = rds.describe_db_instances(DBInstanceIdentifier=instance_id)
         db = resp["DBInstances"][0]
@@ -49,6 +50,7 @@ def create_database(
     except ClientError as e:
         if e.response["Error"]["Code"] != "DBInstanceNotFound":
             raise
+        created = True
         rds.create_db_instance(
             DBInstanceIdentifier=instance_id,
             DBInstanceClass=settings.db_instance_class,
@@ -85,7 +87,7 @@ def create_database(
         port = db["Endpoint"]["Port"]
         logger.info("rds_instance_created", instance_id=instance_id, endpoint=endpoint)
 
-    return {"instance_id": instance_id, "endpoint": endpoint, "port": port}
+    return {"instance_id": instance_id, "endpoint": endpoint, "port": port, "created": created}
 
 
 def destroy_database(session: boto3.Session, settings: InfraSettings) -> None:
