@@ -1,5 +1,21 @@
 # Financial Data Pipeline
 
+**Live demo:** `http://financial-data-pipeline-dev-alb-1832496086.us-east-1.elb.amazonaws.com`
+
+```bash
+# Health
+curl http://financial-data-pipeline-dev-alb-1832496086.us-east-1.elb.amazonaws.com/api/v1/health
+
+# Latest articles
+curl "http://financial-data-pipeline-dev-alb-1832496086.us-east-1.elb.amazonaws.com/api/v1/articles?limit=5"
+
+# LLM analysis for an article
+curl "http://financial-data-pipeline-dev-alb-1832496086.us-east-1.elb.amazonaws.com/api/v1/articles/{event_id}/analysis"
+
+# Per-ticker aggregations
+curl "http://financial-data-pipeline-dev-alb-1832496086.us-east-1.elb.amazonaws.com/api/v1/aggregations?ticker=AAPL"
+```
+
 [![CI](https://github.com/manaydivatia/Financial-Data-Pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/manaydivatia/Financial-Data-Pipeline/actions) ![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An AI-powered financial data pipeline that ingests real-time financial news and SEC filings via Apache Kafka, processes and stores them in a data lake (S3/Parquet), and runs LLM-based analysis (summarization, sentiment analysis, entity extraction) — all deployed on AWS with Infrastructure as Code.
