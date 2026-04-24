@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import boto3
@@ -119,11 +120,20 @@ def destroy_alb(session: boto3.Session, settings: InfraSettings) -> None:
             raise
         logger.info("alb_not_found", name=alb_name)
 
-    # Delete target group
+    # Delete target group — retry since ALB deletion can take a moment to release the association
     tg_arn = _find_target_group(elbv2, tg_name)
     if tg_arn:
-        elbv2.delete_target_group(TargetGroupArn=tg_arn)
-        logger.info("target_group_deleted", name=tg_name)
+        for attempt in range(6):
+            try:
+                elbv2.delete_target_group(TargetGroupArn=tg_arn)
+                logger.info("target_group_deleted", name=tg_name)
+                break
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "ResourceInUse" and attempt < 5:
+                    logger.info("target_group_in_use_retrying", attempt=attempt + 1)
+                    time.sleep(10)
+                else:
+                    raise
 
 
 def _find_target_group(elbv2: Any, name: str) -> str | None:

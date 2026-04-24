@@ -495,6 +495,15 @@ def destroy_ecs_services(session: boto3.Session, settings: InfraSettings, cluste
         service_name = f"{prefix}-{service}"
         try:
             ecs.update_service(cluster=cluster_arn, service=service_name, desiredCount=0)
+        except ClientError as e:
+            if "ServiceNotFoundException" in str(e):
+                logger.info("ecs_service_not_found", service=service_name)
+                continue
+            if "ServiceNotActiveException" in str(e):
+                pass  # already inactive, proceed to delete
+            else:
+                raise
+        try:
             ecs.delete_service(cluster=cluster_arn, service=service_name, force=True)
             logger.info("ecs_service_deleted", service=service_name)
         except ClientError as e:
